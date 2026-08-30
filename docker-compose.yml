@@ -1,0 +1,33 @@
+services:
+  flashback-backend:
+    build: ./flashback-backend
+    container_name: flashback-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: mariadb-server
+      DB_USER: flashback_user
+      DB_PASS: FlashBackPass123!
+      DB_NAME: flashback_db
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - /data/FlashBack/uploads:/app/uploads
+    networks:
+      - flashback-net
+
+  flashback-frontend:
+    build: ./flashback-frontend
+    container_name: flashback-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    depends_on:
+      - flashback-backend
+    networks:
+      - flashback-net
+
+networks:
+  flashback-net:
+    name: flashback_flashback-net
+    external: true
