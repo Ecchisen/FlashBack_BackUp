@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { Upload, CheckCircle, Image as ImageIcon, AlertCircle } from 'lucide-react';
+import { Upload, Camera, CheckCircle, AlertCircle, X } from 'lucide-react';
 
 export default function GuestUpload() {
   const [eventCode, setEventCode] = useState('');
@@ -11,8 +11,10 @@ export default function GuestUpload() {
   const [uploading, setUploading] = useState(false);
   const [statusMessage, setStatusMessage] = useState({ type: '', text: '' });
 
+  const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
   useEffect(() => {
-    // 1. Get event code from URL query string ?event=CODE
     const params = new URLSearchParams(window.location.search);
     const code = params.get('event');
     if (code) {
@@ -20,7 +22,6 @@ export default function GuestUpload() {
       fetchEventDetails(code);
     }
 
-    // 2. Generate or retrieve guest token for quota tracking
     let token = localStorage.getItem('flashback_guest_token');
     if (!token) {
       token = 'guest_' + Math.random().toString(36).substring(2, 11);
@@ -30,21 +31,47 @@ export default function GuestUpload() {
   }, []);
 
   const fetchEventDetails = async (code) => {
+    if (!code) return;
+    setStatusMessage({ type: '', text: '' });
+
     try {
-      const res = await axios.get(`http://${window.location.hostname}:5000/api/events/${code}`);
+      const res = await axios.get(`/api/events/${code.trim()}`);
+      
+      if (!res.data.is_active) {
+        setStatusMessage({ type: 'error', text: 'This event is currently disabled.' });
+        setEventDetails(null);
+        return;
+      }
+
       setEventDetails(res.data);
     } catch (err) {
-      setStatusMessage({ type: 'error', text: 'Event not found or inactive.' });
+      const errorMsg = err.response?.data?.error || 'Event not found or inactive.';
+      setStatusMessage({ type: 'error', text: errorMsg });
+      setEventDetails(null);
     }
   };
 
   const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files);
-    setSelectedFiles(files);
+    const newlySelected = Array.from(e.target.files);
+    if (!newlySelected.length) return;
 
-    // Generate object URLs for immediate image preview
-    const objectUrls = files.map(file => URL.createObjectURL(file));
-    setPreviews(objectUrls);
+    const updatedFiles = [...selectedFiles, ...newlySelected];
+    setSelectedFiles(updatedFiles);
+
+    const newObjectUrls = newlySelected.map(file => URL.createObjectURL(file));
+    setPreviews(prev => [...prev, ...newObjectUrls]);
+
+    // Reset input value to allow re-selecting the same file if needed
+    e.target.value = '';
+  };
+
+  // Remove individual photo by index
+  const handleRemovePhoto = (indexToRemove) => {
+    // Revoke object URL to prevent browser memory leaks
+    URL.revokeObjectURL(previews[indexToRemove]);
+
+    setSelectedFiles(prev => prev.filter((_, idx) => idx !== indexToRemove));
+    setPreviews(prev => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
   const handleUpload = async (e) => {
@@ -55,7 +82,7 @@ export default function GuestUpload() {
     setStatusMessage({ type: '', text: '' });
 
     const formData = new FormData();
-    formData.append('eventCode', eventCode);
+    formData.append('eventCode', eventCode.trim());
     formData.append('guestToken', guestToken);
     
     selectedFiles.forEach(file => {
@@ -63,14 +90,18 @@ export default function GuestUpload() {
     });
 
     try {
-      const res = await axios.post(`http://${window.location.hostname}:5000/api/photos/upload`, formData, {
+      const res = await axios.post('/api/photos/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setStatusMessage({ type: 'success', text: 'Photos uploaded successfully!' });
+      
+      setStatusMessage({ type: 'success', text: res.data.message || 'Uploaded successfully!' });
+      
+      // Cleanup previews
+      previews.forEach(url => URL.revokeObjectURL(url));
       setSelectedFiles([]);
       setPreviews([]);
     } catch (err) {
-      const errorMsg = err.response?.data?.error || 'Failed to upload photos.';
+      const errorMsg = err.response?.data?.error || 'Failed to Upload.';
       setStatusMessage({ type: 'error', text: errorMsg });
     } finally {
       setUploading(false);
@@ -92,14 +123,14 @@ export default function GuestUpload() {
             type="text" 
             value={eventCode} 
             onChange={(e) => setEventCode(e.target.value)} 
-            placeholder="e.g., fun2026"
-            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc' }}
+            placeholder="Enter event code"
+            style={{ width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }}
           />
           <button 
             onClick={() => fetchEventDetails(eventCode)}
             style={{ width: '100%', marginTop: '8px', padding: '10px', background: '#3182CE', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
           >
-            Join Event
+            Start Uploading
           </button>
         </div>
       )}
@@ -122,39 +153,99 @@ export default function GuestUpload() {
 
       {eventDetails && (
         <form onSubmit={handleUpload}>
-          <div style={{
-            border: '2px dashed #CBD5E0',
-            borderRadius: '8px',
-            padding: '30px',
-            textAlign: 'center',
-            backgroundColor: '#F7FAFC',
-            cursor: 'pointer',
-            marginBottom: '16px'
-          }}>
-            <input 
-              type="file" 
-              multiple 
-              accept="image/*"
-              onChange={handleFileSelect}
-              id="file-upload"
-              style={{ display: 'none' }}
-            />
-            <label htmlFor="file-upload" style={{ cursor: 'pointer', display: 'block' }}>
-              <Upload size={40} color="#718096" style={{ marginBottom: '8px' }} />
-              <p style={{ margin: 0, fontWeight: 'bold' }}>Tap to select photos</p>
-              <small style={{ color: '#A0AEC0' }}>Select multiple images from gallery</small>
-            </label>
+          <input 
+            type="file" 
+            multiple 
+            accept="image/*"
+            onChange={handleFileSelect}
+            ref={galleryInputRef}
+            style={{ display: 'none' }}
+          />
+          <input 
+            type="file" 
+            accept="image/*"
+            capture="environment"
+            onChange={handleFileSelect}
+            ref={cameraInputRef}
+            style={{ display: 'none' }}
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
+            <button
+              type="button"
+              onClick={() => cameraInputRef.current.click()}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                border: '2px dashed #CBD5E0',
+                borderRadius: '8px',
+                backgroundColor: '#F7FAFC',
+                cursor: 'pointer'
+              }}
+            >
+              <Camera size={32} color="#3182CE" style={{ marginBottom: '8px' }} />
+              <span style={{ fontWeight: 'bold', color: '#2D3748' }}>Take Photo</span>
+              <small style={{ color: '#A0AEC0' }}>Use Camera</small>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => galleryInputRef.current.click()}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '20px',
+                border: '2px dashed #CBD5E0',
+                borderRadius: '8px',
+                backgroundColor: '#F7FAFC',
+                cursor: 'pointer'
+              }}
+            >
+              <Upload size={32} color="#38A169" style={{ marginBottom: '8px' }} />
+              <span style={{ fontWeight: 'bold', color: '#2D3748' }}>Choose Files</span>
+              <small style={{ color: '#A0AEC0' }}>Select Multiple</small>
+            </button>
           </div>
 
+          {/* Previews Grid with Removal Button */}
           {previews.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', marginBottom: '16px' }}>
               {previews.map((src, index) => (
-                <img 
-                  key={index} 
-                  src={src} 
-                  alt={`Preview ${index}`} 
-                  style={{ width: '100%', height: '100px', objectFit: 'cover', borderRadius: '6px' }} 
-                />
+                <div key={index} style={{ position: 'relative', width: '100%', height: '100px' }}>
+                  <img 
+                    src={src} 
+                    alt={`Preview ${index}`} 
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '6px' }} 
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePhoto(index)}
+                    style={{
+                      position: 'absolute',
+                      top: '4px',
+                      right: '4px',
+                      backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                      color: '#FFF',
+                      border: 'none',
+                      borderRadius: '50%',
+                      width: '24px',
+                      height: '24px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      padding: 0
+                    }}
+                    title="Remove photo"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
               ))}
             </div>
           )}

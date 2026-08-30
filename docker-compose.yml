@@ -5,12 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
-    environment:
-      DB_HOST: mariadb-server
-      DB_USER: flashback_user
-      DB_PASS: FlashBackPass123!
-      DB_NAME: flashback_db
-      UPLOAD_DIR: /app/uploads
+    env_file:
+      - ./flashback-backend/.env
     volumes:
       - /data/FlashBack/uploads:/app/uploads
     networks:

@@ -7,15 +7,21 @@ require('dotenv').config();
 
 const db = require('./db');
 
+// --- STARTUP SECURITY CHECK ---
+if (!process.env.ADMIN_KEY) {
+  console.error('FATAL ERROR: ADMIN_PASSWORD environment variable is not defined!');
+  process.exit(1);
+}
+
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // Base upload directory from .env
 const UPLOAD_BASE = process.env.UPLOAD_DIR || './uploads';
 
 // --- MULTER STORAGE CONFIGURATION ---
-// Configures Multer to store uploaded files into event-specific folders
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const { eventCode } = req.body;
@@ -23,11 +29,9 @@ const storage = multer.diskStorage({
       return cb(new Error('Event code is required'), null);
     }
 
-    // Target folder
     const eventFolder = path.join(UPLOAD_BASE, 'events', eventCode);
 
     try {
-      // Create folder on disk if it doesn't exist yet
       if (!fs.existsSync(eventFolder)) {
         fs.mkdirSync(eventFolder, { recursive: true });
       }
@@ -37,7 +41,6 @@ const storage = multer.diskStorage({
     }
   },
   filename: (req, file, cb) => {
-    // Generate unique filename: timestamp-random.ext (e.g., 1724330000000-83921.jpg)
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const ext = path.extname(file.originalname) || '.jpg';
     cb(null, `photo-${uniqueSuffix}${ext}`);
@@ -46,27 +49,38 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB max file size per image
+  limits: { 
+    fileSize: 50 * 1024 * 1024,
+    fieldSize: 50 * 1024 * 1024
+  },
   fileFilter: (req, file, cb) => {
-    // Only accept image files
     if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
-      cb(new Error('Only image files are allowed!'), false);
+      cb(new Error('YO! Only image files are allowed!'), false);
     }
   }
 });
-
 
 // --- API ROUTES ---
 
 // 1. Health check route
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'FlashBack Backend is running' });
+  res.json({ status: 'ok', message: 'All Good!' });
 });
 
+// 2. Admin Login Verification
+app.post('/api/admin/login', (req, res) => {
+  const { password } = req.body;
 
-// 2. Create a new event (Admin)
+  if (password === process.env.ADMIN_KEY) {
+    return res.json({ success: true, token: 'authenticated' });
+  }
+
+  return res.status(401).json({ error: 'Invalid password' });
+});
+
+// 3. Create a new event (Admin)
 app.post('/api/events/create', async (req, res) => {
   const { eventCode, title, maxPhotos } = req.body;
 
@@ -95,8 +109,7 @@ app.post('/api/events/create', async (req, res) => {
   }
 });
 
-
-// 3. Get event info by code (Used when guest scans QR code)
+// 4. Get event info by code
 app.get('/api/events/:code', async (req, res) => {
   const { code } = req.params;
 
@@ -117,10 +130,8 @@ app.get('/api/events/:code', async (req, res) => {
   }
 });
 
-
-// 4. Upload photo route (Guest)
+// 5. Upload photo route (Guest)
 app.post('/api/photos/upload', async (req, res) => {
-  // Accepts up to 10 photos using the field name 'photos'
   upload.array('photos', 10)(req, res, async (err) => {
     if (err) {
       return res.status(400).json({ error: err.message });
@@ -133,13 +144,11 @@ app.post('/api/photos/upload', async (req, res) => {
     const { eventCode, guestToken } = req.body;
 
     if (!eventCode || !guestToken) {
-      // Clean up uploaded files if metadata is missing
       req.files.forEach(file => fs.existsSync(file.path) && fs.unlinkSync(file.path));
       return res.status(400).json({ error: 'Missing eventCode or guestToken.' });
     }
 
     try {
-      // Step A: Find the event
       const [events] = await db.query(
         'SELECT id, max_photos_per_user, is_active FROM events WHERE event_code = ?',
         [eventCode]
@@ -152,7 +161,6 @@ app.post('/api/photos/upload', async (req, res) => {
 
       const event = events[0];
 
-      // Step B: Check guest upload count
       const [userPhotos] = await db.query(
         'SELECT COUNT(*) as count FROM photos WHERE event_id = ? AND guest_token = ?',
         [event.id, guestToken]
@@ -168,7 +176,6 @@ app.post('/api/photos/upload', async (req, res) => {
         });
       }
 
-      // Step C: Save photo metadata into MariaDB for each file
       for (const file of req.files) {
         await db.query(
           'INSERT INTO photos (event_id, guest_token, file_name, original_name, file_size_bytes) VALUES (?, ?, ?, ?, ?)',
@@ -190,14 +197,8 @@ app.post('/api/photos/upload', async (req, res) => {
     }
   });
 });
-// --- START SERVER ---
-const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`FlashBack Server running on http://0.0.0.0:${PORT}`);
-});
-
-// Get all events for Admin view
+// 6. Get all events for Admin view
 app.get('/api/admin/events', async (req, res) => {
   try {
     const [rows] = await db.query('SELECT * FROM events ORDER BY created_at DESC');
@@ -208,7 +209,7 @@ app.get('/api/admin/events', async (req, res) => {
   }
 });
 
-// Toggle event active state
+// 7. Toggle event active state
 app.patch('/api/admin/events/:id/toggle', async (req, res) => {
   const { id } = req.params;
   const { is_active } = req.body;
@@ -221,14 +222,11 @@ app.patch('/api/admin/events/:id/toggle', async (req, res) => {
   }
 });
 
-// DELETE /api/admin/events/:id
+// 8. Delete event
 app.delete('/api/admin/events/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Delete associated photos from DB first (avoids FK constraint errors)
     await db.query('DELETE FROM photos WHERE event_id = ?', [id]);
-
-    // 2. Delete the event using primary key 'id'
     const [result] = await db.query('DELETE FROM events WHERE id = ?', [id]);
 
     if (result.affectedRows === 0) {
@@ -240,4 +238,11 @@ app.delete('/api/admin/events/:id', async (req, res) => {
     console.error('Delete error:', err);
     res.status(500).json({ error: 'Failed to delete event' });
   }
+});
+
+// --- START SERVER ---
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`FlashBack Server running on http://0.0.0.0:${PORT}`);
 });
