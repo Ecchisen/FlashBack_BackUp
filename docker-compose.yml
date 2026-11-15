@@ -23,6 +23,19 @@ services:
     networks:
       - flashback-net
 
+  flashback-gallery:
+    image: filebrowser/filebrowser:v2.32.0
+    container_name: flashback-gallery
+    restart: unless-stopped
+    command: --database=/database/filebrowser.db --root=/srv --baseurl=""
+    ports:
+      - "8001:80"
+    volumes:
+      - /data/FlashBack/uploads:/srv
+      - /data/FlashBack/filebrowser-data:/database
+    networks:
+      - flashback-net
+
 networks:
   flashback-net:
     name: flashback_flashback-net
