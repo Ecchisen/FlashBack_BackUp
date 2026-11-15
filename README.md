@@ -192,4 +192,3 @@ ingress:
 * **Frontend:** React, Vite, Tailwind CSS + inline CSS fallbacks, `lucide-react`, `qrcode.react`
 * **Backend:** Node.js, Express, Socket.IO, `mysql2`, `bcryptjs`, `jsonwebtoken`, `multer`, `sharp`
 * **Infrastructure:** Docker Compose, MariaDB, Cloudflare Tunnel
-EOF
